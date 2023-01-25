@@ -1,16 +1,30 @@
 <?php
 
-namespace NFePHP\eSocial\Common;
+namespace NFePHP\EFDReinf\Common;
 
-use DateTime;
+/**
+ * Class Common\Tools, basic structures
+ *
+ * @category  Library
+ * @package   NFePHP\EFDReinf
+ * @copyright NFePHP Copyright (c) 2017 - 2021
+ * @license   http://www.gnu.org/licenses/lgpl.txt LGPLv3+
+ * @license   https://opensource.org/licenses/MIT MIT
+ * @license   http://www.gnu.org/licenses/gpl.txt GPLv3+
+ * @author    Roberto L. Machado <linux.rlm at gmail dot com>
+ * @link      http://github.com/nfephp-org/sped-efdreinf for the canonical source repository
+ */
+
 use NFePHP\Common\Certificate;
+use NFePHP\EFDReinf\Common\Restful\Rest;
+use NFePHP\EFDReinf\Common\Soap\SoapCurl;
+use DateTime;
+use stdClass;
 
 class Tools
 {
     const EVT_INICIAIS = 1;
-
     const EVT_NAO_PERIODICOS = 2;
-
     const EVT_PERIODICOS = 3;
 
     /**
@@ -22,6 +36,10 @@ class Tools
      */
     protected $date;
     /**
+     * @var bool
+     */
+    protected $admpublica = false;
+    /**
      * @var int
      */
     protected $tpInsc;
@@ -29,6 +47,10 @@ class Tools
      * @var string
      */
     protected $nrInsc;
+    /**
+     * @var string
+     */
+    protected $doc;
     /**
      * @var string
      */
@@ -81,72 +103,39 @@ class Tools
         2 => 'EVENTOS NÃO PERIÓDICOS',
         3 => 'EVENTOS PERIÓDICOS',
     ];
-
     /**
      * @var array
      */
     protected $grupos = [
         1 => [ //EVENTOS INICIAIS grupo [1]
-            'S-1000',
-            'S-1005',
-            'S-1010',
-            'S-1020',
-            'S-1030',
-            'S-1035',
-            'S-1040',
-            'S-1050',
-            'S-1060',
-            'S-1070',
-            'S-1080',
+            'R-1000',
+            'R-1070'
         ],
         2 => [ //EVENTOS NÃO PERIÓDICOS grupo [2]
-            'S-2190',
-            'S-2200',
-            'S-2205',
-            'S-2206',
-            'S-2210',
-            'S-2220',
-            'S-2221',
-            'S-2230',
-            'S-2231',
-            'S-2240',
-            'S-2245',
-            'S-2250',
-            'S-2260',
-            'S-2298',
-            'S-2299',
-            'S-2300',
-            'S-2306',
-            'S-2399',
-            'S-2400',
-            'S-2405',
-            'S-2410',
-            'S-2416',
-            'S-2418',
-            'S-2420',
-            'S-3000',
-            'S-4000',
-            'S-5001',
-            'S-5002',
-            'S-5003',
-            'S-5011',
-            'S-5012',
-            'S-5013',
+            'R-3010',
+            'R-5001',
+            'R-5011',
+            'R-9000'
         ],
         3 => [ //EVENTOS PERIÓDICOS grupo [3]
-            'S-1200',
-            'S-1202',
-            'S-1207',
-            'S-1210',
-            'S-1250',
-            'S-1260',
-            'S-1270',
-            'S-1280',
-            'S-1295',
-            'S-1298',
-            'S-1299',
-            'S-1300',
+            'R-2010',
+            'R-2020',
+            'R-2030',
+            'R-2040',
+            'R-2050',
+            'R-2055',
+            'R-2060',
+            'R-2070',
+            'R-2098',
+            'R-2099',
+            'R-4010',
+            'R-4020',
+            'R-4040'
         ],
+        4 => [ //EVENTOS FINAIS grupo [4]
+            'R-2099',
+            'R-4099'
+        ]
     ];
 
     /**
@@ -165,33 +154,119 @@ class Tools
         $this->eventoVersion = $stdConf->eventoVersion;
         $this->serviceVersion = $stdConf->serviceVersion;
         $this->date = new DateTime();
-        $this->tpInsc = $stdConf->empregador->tpInsc;
-        $this->nrInsc = $stdConf->empregador->nrInsc;
-        $this->nmRazao = $stdConf->empregador->nmRazao;
+        $this->admpublica = $stdConf->contribuinte->admPublica ?? false;
+        $this->tpInsc = $stdConf->contribuinte->tpInsc;
+        $this->nrInsc = $stdConf->contribuinte->nrInsc;
+        $this->nmRazao = $stdConf->contribuinte->nmRazao;
         $this->transmissortpInsc = $stdConf->transmissor->tpInsc;
         $this->transmissornrInsc = $stdConf->transmissor->nrInsc;
-        $this->layoutStr = $this->stringfyVersions($stdConf->eventoVersion);
-        $this->serviceStr = $this->stringfyVersions($stdConf->serviceVersion, 1);
         $this->certificate = $certificate;
-        $this->path = realpath(__DIR__ . '/../../') . '/';
+        $this->doc = $this->nrInsc;
+        if ($this->tpInsc == 1 && !$this->admpublica) {
+            $this->doc = substr($this->nrInsc, 0, 8);
+        }
+
+        $this->path = realpath(
+            __DIR__ . '/../../'
+        ).'/';
+
         $this->serviceXsd = XsdSeeker::seek(
-            $this->path."schemes/comunicacao/$this->serviceStr/"
+            $this->path . "schemes/comunicacao/v$this->serviceVersion/"
         );
     }
 
     /**
-     * Stringfy layout number
-     * @param string $version
-     * @param int $length
+     * Send request to webservice
+     * @param string $request
      * @return string
      */
-    protected function stringfyVersions($version, $length = 2)
+    protected function sendRequest(string $request): string
     {
-        $fils = explode('.', $version);
-        $str  = 'v';
-        foreach ($fils as $fil) {
-            $str .= str_pad($fil, $length, '0', STR_PAD_LEFT) . '_';
+        if (empty($this->soap)) {
+            $this->soap = new SoapCurl($this->certificate);
         }
-        return substr($str, 0, -1);
+        $envelope = "<soapenv:Envelope ";
+        foreach ($this->soapnamespaces as $key => $xmlns) {
+            $envelope .= "$key = \"$xmlns\" ";
+        }
+        $envelope .= ">"
+            . "<soapenv:Header/>"
+            . "<soapenv:Body>"
+            . $request
+            . "</soapenv:Body>"
+            . "</soapenv:Envelope>";
+
+        $msgSize = strlen($envelope);
+        $parameters = [
+            "Content-Type: text/xml;charset=UTF-8",
+            "SOAPAction: \"$this->action\"",
+            "Content-length: $msgSize"
+        ];
+        if ($this->method === 'ReceberLoteEventos') {
+            $url = $this->uri[$this->tpAmb];
+        } else {
+            $url = $this->uriconsulta[$this->tpAmb];
+        }
+        $this->lastRequest = $envelope;
+        return (string) $this->soap->send(
+            $this->method,
+            $url,
+            $this->action,
+            $envelope,
+            $parameters
+        );
+    }
+
+    protected function sendApi(string $method, string $url, string $content)
+    {
+        if (empty($this->restclass)) {
+            $this->restclass = new Rest($this->certificate);
+        }
+        return $this->restclass->sendApi($method, $url, $content);
+    }
+
+    /**
+     * Verify the availability of a digital certificate.
+     * If available, place it where it is needed
+     * @param FactoryInterface $evento
+     * @return void
+     */
+    protected function checkCertificate(FactoryInterface $evento)
+    {
+        //try to get certificate from event
+        $certificate = $evento->getCertificate();
+        if (empty($certificate)) {
+            $evento->setCertificate($this->certificate);
+        }
+    }
+
+    /**
+     * Valid input parameters
+     * @param array $properties
+     * @param stdClass $std
+     * @return void
+     * @throws \Exception
+     */
+    protected function validInputParameters(array $properties, stdClass $std)
+    {
+        foreach ($properties as $key => $rules) {
+            $r = json_decode(json_encode($rules));
+            if ($r->required) {
+                if (!isset($std->$key)) {
+                    throw new \Exception("$key não foi passado como parâmetro e é obrigatório.");
+                }
+                $value = $std->$key;
+                if ($r->type === 'integer') {
+                    if ($value < $r->min || $value > $r->max) {
+                        throw new \Exception("$key contêm um valor invalido [$value].");
+                    }
+                }
+                if ($r->type === 'string') {
+                    if (!preg_match("/{$r->regex}/", $value)) {
+                        throw new \Exception("$key contêm um valor invalido [$value].");
+                    }
+                }
+            }
+        }
     }
 }
